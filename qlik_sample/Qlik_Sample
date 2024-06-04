@@ -1,0 +1,90 @@
+///$tab MAP
+MAP_ACT_NAME: //Словарь наименований активностей
+	mapping
+	load 
+		[Сегмент активного Код],
+		if(
+			wildmatch([Сегмент активного итоговый], '*редит*', 'Ипотека'),
+					  'Кредиты',
+					  			[Сегмент активного итоговый]) as Сегмент_имя
+from
+[C:\Users\operator\Desktop\source\справочник сегментов активности.xlsx]
+(ooxml, embedded labels, table is Document_TB02);
+
+MAP_MARKET_LIST:
+	mapping
+	load
+		[Деловой партнер],
+		'MKT' as Marketing_sign
+	from
+	[C:\Users\operator\Desktop\source\Список маркетинга.xlsx]
+	(ooxml, embedded labels, table is Document_CH06);
+
+/_____________________________________________________________________________________________________________
+///$tab Dictionary
+dict_income: //Словарь статей доходов
+	load
+		Статья_осн as Статья,
+		Уровень_1,
+		Уровень_2,
+		Уровень_3
+	from
+	[C:\Users\operator\Desktop\source\Справочник_статей.xlsx]
+	(ooxml ,embedded labels, table is Document_TB01);
+
+/_____________________________________________________________________________________________________________
+///$tab load
+income: 			 //Доход постатейно
+	load
+		[Деловой партнер] &' | '& Месяц 						as Ключ_Дата_ДП,
+		[Деловой партнер],
+		Месяц,
+		Статья,
+	    Значение,
+	    ApplyMap('MAP_MARKET_LIST',[Деловой партнер], 'noMKT') as Признак_маркетинга
+	    				 //в файле не было признака в поле, поэтому я его сам впечатал в загрузку
+	from
+	[C:\Users\operator\Desktop\source\Доход Банка (факт) по деловым партнерам и статьям доходов_*.qvd](qvd);
+
+activity: 			 //Активность в продуктах помесячно
+	load
+		[Деловой партнер] &' | '& День 							as Ключ_Дата_ДП,
+		[Сегмент активного Код],
+		ApplyMap('MAP_ACT_NAME',[Сегмент активного Код], 'n/a') as Сегмент_имя
+	from
+	[C:\Users\operator\Desktop\source\Сегмент активности деловых партнеров.qvd](qvd);
+
+plan: 	   		     //План по статьям помесячно
+	CrossTable(Месяц, План, 4)
+	LOAD *
+	FROM
+	[C:\Users\operator\Desktop\source\Доход Банка (план) по статьям доходов.xlsx]
+	(ooxml, embedded labels, table is Document_CH28);
+	
+	Concatenate(income)  //План__________прицепил конкатом,
+					             //чтобы данные не перемешивались
+					             //и считать можно было без аггрегирования при текущей сегментации
+	Load
+	    Статья,
+	    date(date#(Месяц, 'MMM YYYY'), 'DD.MM.YYYY') 			as Месяц,
+	    План,
+	    1 as CNT
+	//    'План' 													as [Деловой партнер],    
+	resident plan;
+	
+	drop table plan;
+
+/_____________________________________________________________________________________________________________
+///$tab Store
+export_table:
+	load
+		[Деловой партнер],
+		Месяц,
+		num#(Sum(Значение)) as Сумма
+	Resident income
+	where WildMatch(Статья, '*роце*')
+	group by [Деловой партнер], Месяц;
+	
+	store export_table into [C:\Users\operator\Desktop\source\interest_cut.qvd](qvd);
+	
+	drop table export_table;
